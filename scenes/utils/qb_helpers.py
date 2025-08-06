@@ -94,6 +94,31 @@ def bin_playclock(play_clock):
     else:
         return '35-40s'
 
+def bin_play_outcome(row):
+    """
+    Bin play outcome into result categories.
+    
+    Args:
+        row: DataFrame row with pass outcome data
+        
+    Returns:
+        str: Play outcome category (Touchdown, First Down, No First Down)
+    """
+    # Handle touchdown first (highest priority)
+    if pd.notna(row.get('pass_touchdown')) and row.get('pass_touchdown') == 1:
+        return 'Touchdown'
+    
+    # Check for first down on passing plays
+    if pd.notna(row.get('first_down_pass')) and row.get('first_down_pass') == 1:
+        return 'First Down'
+    
+    # Check general first down field as backup
+    if pd.notna(row.get('first_down')) and row.get('first_down') == 1:
+        return 'First Down'
+    
+    # All other outcomes (incomplete, complete but no first down, etc.)
+    return 'No First Down'
+
 def aggregate_heatmap(df):
     """
     Aggregate data for heatmap visualization.
@@ -118,26 +143,37 @@ def aggregate_heatmap(df):
 
 def aggregate_rose(df):
     """
-    Aggregate data for rose plot visualization.
+    Aggregate data for rose plot visualization showing top receivers by play outcomes.
     
     Args:
-        df: DataFrame with pass direction and depth data
+        df: DataFrame with receiver and play outcome data
         
     Returns:
         DataFrame: Aggregated data for rose plot
     """
     if df.empty:
-        return pd.DataFrame(columns=['Direction', 'Pass Depth', 'Frequency'])
+        return pd.DataFrame(columns=['Receiver', 'Play Outcome', 'Frequency'])
     
-    # Add binned columns if they don't exist
-    if 'direction_bin' not in df.columns:
-        df['direction_bin'] = df['pass_direction'].apply(bin_direction)
-    if 'depth_bin' not in df.columns:
-        df['depth_bin'] = df['air_yards'].apply(bin_depth)
+    # Add play outcome binning if it doesn't exist
+    if 'play_outcome_bin' not in df.columns:
+        df['play_outcome_bin'] = df.apply(bin_play_outcome, axis=1)
     
-    # Aggregate by direction and depth
-    rose_data = df.groupby(['direction_bin', 'depth_bin']).size().reset_index(name='Frequency')
-    rose_data = rose_data.rename(columns={'direction_bin': 'Direction', 'depth_bin': 'Pass Depth'})
+    # Filter to top receivers by total targets (to keep visualization manageable)
+    receiver_counts = df.groupby('receiver_player_name').size().reset_index(name='total_targets')
+    top_receivers = receiver_counts.nlargest(10, 'total_targets')['receiver_player_name'].tolist()
+    
+    # Filter data to only include top receivers and passing plays
+    filtered_df = df[
+        (df['receiver_player_name'].isin(top_receivers)) & 
+        (df['receiver_player_name'].notna())
+    ].copy()
+    
+    if filtered_df.empty:
+        return pd.DataFrame(columns=['Receiver', 'Play Outcome', 'Frequency'])
+    
+    # Aggregate by receiver and play outcome
+    rose_data = filtered_df.groupby(['receiver_player_name', 'play_outcome_bin']).size().reset_index(name='Frequency')
+    rose_data = rose_data.rename(columns={'receiver_player_name': 'Receiver', 'play_outcome_bin': 'Play Outcome'})
     
     return rose_data
 

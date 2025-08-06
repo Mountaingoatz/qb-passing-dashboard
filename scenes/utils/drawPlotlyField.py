@@ -31,7 +31,7 @@ def draw_plotly_field(fig, margins=0, show_axis=False, show_title=False,
     field_length_ft = field_length * 3
     field_width_ft = field_width * 3
     
-    # Set up the figure layout
+    # Set up the figure layout with proper aspect ratio
     fig.update_layout(
         xaxis=dict(
             range=[-margins, field_length_ft + margins],
@@ -40,7 +40,9 @@ def draw_plotly_field(fig, margins=0, show_axis=False, show_title=False,
             showline=False,
             showticklabels=show_axis,
             title='' if not show_title else 'Field Length (feet)',
-            side='bottom'
+            side='bottom',
+            scaleanchor='y',
+            scaleratio=1
         ),
         yaxis=dict(
             range=[-margins, field_width_ft + margins],
@@ -53,17 +55,18 @@ def draw_plotly_field(fig, margins=0, show_axis=False, show_title=False,
         ),
         plot_bgcolor=bg_color,
         paper_bgcolor=bg_color,
-        width=800,
-        height=400,
-        margin=dict(l=20, r=20, t=20, b=20)
+        width=900,
+        height=450,
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False
     )
     
-    # Draw field outline
+    # Draw field outline with improved colors
     fig.add_shape(
         type="rect",
         x0=0, y0=0, x1=field_length_ft, y1=field_width_ft,
-        line=dict(color="white", width=3),
-        fillcolor="green",
+        line=dict(color="white", width=4),
+        fillcolor="#228B22",  # Forest green
         layer="below"
     )
     
@@ -74,8 +77,8 @@ def draw_plotly_field(fig, margins=0, show_axis=False, show_title=False,
     fig.add_shape(
         type="rect",
         x0=0, y0=0, x1=end_zone_length, y1=field_width_ft,
-        line=dict(color="white", width=2),
-        fillcolor="darkgreen",
+        line=dict(color="white", width=3),
+        fillcolor="#006400",  # Dark green
         layer="below"
     )
     
@@ -84,8 +87,8 @@ def draw_plotly_field(fig, margins=0, show_axis=False, show_title=False,
         type="rect",
         x0=field_length_ft - end_zone_length, y0=0, 
         x1=field_length_ft, y1=field_width_ft,
-        line=dict(color="white", width=2),
-        fillcolor="darkgreen",
+        line=dict(color="white", width=3),
+        fillcolor="#006400",  # Dark green
         layer="below"
     )
     
@@ -99,13 +102,28 @@ def draw_plotly_field(fig, margins=0, show_axis=False, show_title=False,
         
         yard_line_positions.append(x_pos)
         
-        # Draw yard line
+        # Draw yard line with varying thickness
+        line_width = 3 if i % 10 == 0 else 2  # Thicker lines every 10 yards
         fig.add_shape(
             type="line",
             x0=x_pos, y0=0, x1=x_pos, y1=field_width_ft,
-            line=dict(color="white", width=2),
+            line=dict(color="white", width=line_width),
             layer="below"
         )
+    
+    # Add 50-yard line marking
+    fifty_yard_pos = end_zone_length + (50 * 3)
+    fig.add_annotation(
+        x=fifty_yard_pos, y=field_width_ft/2,
+        text="50",
+        showarrow=False,
+        font=dict(color="white", size=18, family="Arial Black"),
+        xanchor="center",
+        yanchor="middle",
+        bgcolor="rgba(0,0,0,0.3)",
+        bordercolor="white",
+        borderwidth=1
+    )
     
     # Draw hash marks
     hash_mark_distance = 18.5 * 3  # 18.5 yards from sideline in feet
@@ -132,24 +150,27 @@ def draw_plotly_field(fig, margins=0, show_axis=False, show_title=False,
         x_pos = end_zone_length + (i * 3)
         number_positions.append((x_pos, i))
     
-    # Add yard numbers as annotations
+    # Add yard numbers as annotations with better positioning
     for x_pos, yard_num in number_positions:
+        # Display yard numbers on both sides of 50-yard line
+        display_num = min(yard_num, 100 - yard_num) if yard_num > 50 else yard_num
+        
         # Left side numbers
         fig.add_annotation(
-            x=x_pos, y=field_width_ft/2 + 15,
-            text=str(yard_num),
+            x=x_pos, y=field_width_ft/2 + 20,
+            text=str(display_num),
             showarrow=False,
-            font=dict(color="white", size=12),
+            font=dict(color="white", size=14, family="Arial Black"),
             xanchor="center",
             yanchor="middle"
         )
         
         # Right side numbers
         fig.add_annotation(
-            x=x_pos, y=field_width_ft/2 - 15,
-            text=str(yard_num),
+            x=x_pos, y=field_width_ft/2 - 20,
+            text=str(display_num),
             showarrow=False,
-            font=dict(color="white", size=12),
+            font=dict(color="white", size=14, family="Arial Black"),
             xanchor="center",
             yanchor="middle"
         )

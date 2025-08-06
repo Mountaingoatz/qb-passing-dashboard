@@ -20,7 +20,7 @@ from scenes.dashboard import dashboard_page, display_fig, rose_plot
 from components.globalComponents.navigationbar import navigation_bar
 from scenes.utils.drawPlotlyField import draw_plotly_field
 from scenes.utils.qb_helpers import (
-    bin_direction, bin_depth, bin_playclock,
+    bin_direction, bin_depth, bin_playclock, bin_play_outcome,
     aggregate_heatmap, aggregate_rose, aggregate_timeline, aggregate_sankey
 )
 
@@ -267,7 +267,16 @@ def update_display_graph(pass_detail, isTooltips_on, rosetype_toggle,
         return filtered_df
     
     def update_field_figure(display_fig, df):
-        display_fig.data = [] 
+        # Clear existing traces but keep field markings
+        traces_to_keep = []
+        for trace in display_fig.data:
+            if hasattr(trace, 'type') and trace.type == 'scatter' and hasattr(trace, 'name'):
+                # Keep field annotation traces if they exist
+                continue
+            traces_to_keep.append(trace)
+        
+        # Clear all data traces (keep field shapes)
+        display_fig.data = []
         
         # Convert coordinates from yards to feet to match field coordinate system
         # Field: 0-360 feet (120 yards), Data: 0-100 yards
@@ -277,44 +286,57 @@ def update_display_graph(pass_detail, isTooltips_on, rosetype_toggle,
         x_coords = []
         for x in df['pass_location_x'].to_list():
             # Convert yardline to field position in feet
-            # 0 yardline = 30 feet (end zone), 100 yardline = 330 feet
-            field_x = 30 + (x * 3)  # 30 feet offset + yards to feet
+            # End zone is 30 feet, field starts at yard 0
+            field_x = 30 + (x * 3)  # 30 feet end zone offset + yards to feet conversion
             x_coords.append(field_x)
         
         # Convert Y coordinates (yards to feet)
         y_coords = []
         for y in df['pass_location_y'].to_list():
             # Convert sideline position to field position in feet
-            # Field width is 160 feet, data range is 5-48 yards
             field_y = y * 3  # Convert yards to feet
             y_coords.append(field_y)
         
-        # Add heatmap contour
-        display_fig.add_trace(go.Histogram2dContour( 
+        # Create density contour with improved styling
+        display_fig.add_trace(go.Histogram2dContour(
             x=x_coords,
             y=y_coords,
-            colorscale=['rgb(255, 255, 255)'] + px.colors.sequential.Magma[1:][::-1],
-            xaxis='x2',
-            yaxis='y2',
+            colorscale=[
+                [0, 'rgba(255, 255, 255, 0)'],      # Transparent for low density
+                [0.2, 'rgba(255, 204, 102, 0.3)'],   # Light orange
+                [0.4, 'rgba(255, 153, 51, 0.5)'],    # Medium orange  
+                [0.6, 'rgba(255, 102, 0, 0.7)'],     # Dark orange
+                [0.8, 'rgba(204, 51, 0, 0.8)'],      # Red-orange
+                [1.0, 'rgba(153, 0, 0, 0.9)']        # Dark red
+            ],
             showscale=False,
-            line=dict(width=0),
-            hoverinfo='none'
+            line=dict(width=1, color='rgba(255,255,255,0.8)'),
+            hoverinfo='skip',
+            contours=dict(
+                coloring='fill',
+                showlines=True,
+                start=1,
+                end=None,
+                size=2
+            ),
+            nbinsx=25,
+            nbinsy=15,
+            opacity=0.8
         ))
         
-        # Add scatter points
+        # Add scatter points with better visibility
         display_fig.add_trace(go.Scatter(
             x=x_coords,
             y=y_coords,
-            xaxis='x2',
-            yaxis='y2',
             mode='markers',
             marker=dict(
-                symbol='x',
-                color='black',
-                size=4
+                symbol='circle',
+                color='rgba(0, 0, 0, 0.6)',
+                size=3,
+                line=dict(width=0.5, color='white')
             ),
             name='Pass Origin' if pass_detail == 'pass_' else 'Pass Target',
-            hoverinfo='none',
+            hoverinfo='text',
         ))
 
         # Prepare tooltip data
@@ -346,39 +368,82 @@ def update_display_graph(pass_detail, isTooltips_on, rosetype_toggle,
         return display_fig
     
     def process_data_for_rose_plot(df):
-        # Create rose plot data for pass directions and depths
-        directions_df = pd.DataFrame(product(directions, depths, [0]), 
-                                   columns=['Direction', 'Pass Depth', 'Frequency']) 
-
-        # Count actual data
-        df['direction_bin'] = df['pass_direction'].apply(bin_direction)
-        df['depth_bin'] = df['air_yards'].apply(bin_depth)
+        # Create rose plot data for top receivers and play outcomes
+        if df.empty:
+            return pd.DataFrame(columns=['Receiver', 'Play Outcome', 'Frequency'])
         
-        distcounts_df = df.groupby(['direction_bin', 'depth_bin']).size().reset_index()
-        distcounts_df = distcounts_df.rename({
-            'direction_bin': 'Direction', 'depth_bin': 'Pass Depth', 0: 'Frequency 2'
+        # Add play outcome binning
+        df['play_outcome_bin'] = df.apply(bin_play_outcome, axis=1)
+        
+        # Get top receivers by total targets
+        receiver_counts = df[df['receiver_player_name'].notna()].groupby('receiver_player_name').size().reset_index(name='total_targets')
+        top_receivers = receiver_counts.nlargest(8, 'total_targets')['receiver_player_name'].tolist()
+        
+        # Filter to top receivers only
+        filtered_df = df[
+            (df['receiver_player_name'].isin(top_receivers)) & 
+            (df['receiver_player_name'].notna())
+        ].copy()
+        
+        if filtered_df.empty:
+            return pd.DataFrame(columns=['Receiver', 'Play Outcome', 'Frequency'])
+        
+        # Create outcome categories
+        outcomes = ['No First Down', 'First Down', 'Touchdown']
+        
+        # Create template with all receiver/outcome combinations
+        template_data = []
+        for receiver in top_receivers:
+            for outcome in outcomes:
+                template_data.append({'Receiver': receiver, 'Play Outcome': outcome, 'Frequency': 0})
+        
+        receivers_df = pd.DataFrame(template_data)
+        
+        # Count actual data by receiver and outcome
+        actual_counts = filtered_df.groupby(['receiver_player_name', 'play_outcome_bin']).size().reset_index()
+        actual_counts = actual_counts.rename({
+            'receiver_player_name': 'Receiver', 'play_outcome_bin': 'Play Outcome', 0: 'Frequency 2'
         }, axis=1)
         
-        # Merge with template
-        directions_df = directions_df.merge(distcounts_df, on=['Direction', 'Pass Depth'], how='left')
-        directions_df['Frequency'] = np.max(directions_df[['Frequency', 'Frequency 2']], axis=1)
-        directions_df = directions_df.drop(columns=['Frequency 2'])
+        # Merge template with actual data
+        receivers_df = receivers_df.merge(actual_counts, on=['Receiver', 'Play Outcome'], how='left')
+        receivers_df['Frequency'] = receivers_df[['Frequency', 'Frequency 2']].max(axis=1)
+        receivers_df = receivers_df.drop(columns=['Frequency 2'], errors='ignore')
+        receivers_df['Frequency'] = receivers_df['Frequency'].fillna(0)
         
-        return directions_df
+        return receivers_df
     
-    def update_rose_plot(directions_df, rosetype_toggle):
-        depths_colors = ['#67001f', '#bb2a34', '#e58368', '#fbceb6', '#f7f7f7',
-                        '#c1ddec', '#6bacd1', '#2a71b2', '#053061']
+    def update_rose_plot(receivers_df, rosetype_toggle):
+        # Color scheme for play outcomes
+        outcome_colors = {
+            'No First Down': '#dc3545',    # Red - unsuccessful plays
+            'First Down': '#fd7e14',       # Orange - positive plays
+            'Touchdown': '#198754'         # Green - best outcome
+        }
         
-        rose_fig = px.bar_polar(directions_df, r="Frequency", theta="Direction",
-                               color='Pass Depth',
+        # Create discrete color sequence in the right order
+        outcomes_order = ['No First Down', 'First Down', 'Touchdown']
+        colors_sequence = [outcome_colors[outcome] for outcome in outcomes_order]
+        
+        rose_fig = px.bar_polar(receivers_df, r="Frequency", theta="Receiver",
+                               color='Play Outcome',
                                template="ggplot2",
-                               color_discrete_sequence=depths_colors,
-                               title="Passing Tendencies by Direction and Depth",
+                               color_discrete_sequence=colors_sequence,
+                               title="Top Receivers by Play Outcomes",
+                               category_orders={"Play Outcome": outcomes_order}
                                )
         rose_fig.update_layout(
-            legend_title_text='Pass Depth',
-            font=dict(family='Ubuntu')
+            legend_title_text='Play Result',
+            font=dict(family='Ubuntu'),
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, max(receivers_df['Frequency'].max() * 1.1, 1)]
+                ),
+                angularaxis=dict(
+                    tickfont=dict(size=10)  # Smaller font for receiver names
+                )
+            )
         )
         return rose_fig
 
@@ -402,8 +467,8 @@ def update_display_graph(pass_detail, isTooltips_on, rosetype_toggle,
 
     if len(df) != 0:
         new_display_fig = update_field_figure(display_fig, df)
-        directions_df = process_data_for_rose_plot(df)
-        new_rose_fig = update_rose_plot(directions_df, rosetype_toggle)
+        receivers_df = process_data_for_rose_plot(df)
+        new_rose_fig = update_rose_plot(receivers_df, rosetype_toggle)
         return new_display_fig, new_rose_fig
     
     else:

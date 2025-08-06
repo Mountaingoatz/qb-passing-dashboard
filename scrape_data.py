@@ -51,7 +51,9 @@ def download_pbp_data():
         'passer_player_name', 'receiver_player_name', 'air_yards', 
         'epa', 'complete_pass', 'down', 'distance', 'play_clock',
         'game_date', 'posteam', 'defteam', 'pass_location_x', 
-        'pass_location_y', 'pass_direction', 'depth_bin'
+        'pass_location_y', 'pass_direction', 'depth_bin',
+        # New columns needed for play outcome analysis
+        'first_down_pass', 'pass_touchdown', 'first_down'
     ]
     
     # Handle play_clock conversion first (it exists but needs to be converted to numeric)
